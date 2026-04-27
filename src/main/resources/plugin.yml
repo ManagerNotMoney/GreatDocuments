@@ -1,0 +1,23 @@
+name: GreatDocuments
+version: '${version}'
+main: io.github.potaseval.DocsBase
+description: Плагин добавляет документы.
+author: ManagerMoney
+api-version: "1.21.11"
+commands:
+  gd:
+    description: Управление паспортами
+    usage: |
+      /gd passport - внутренний паспорт
+      /gd setpassport [игрок] <поле> <значение> - заполнить внутренний паспорт
+      /gd foreignpassport - загранпаспорт
+      /gd setforeignpassport [игрок] <поле> <значение> - заполнить загранпаспорт
+      /gd view <ник> - запросить просмотр паспорта
+      /gd acceptview/denyview <ник> - ответ на запрос
+permissions:
+  greatdocuments.setpassport:
+    description: Позволяет редактировать внутренние паспорта
+    default: op
+  greatdocuments.setforeignpassport:
+    description: Позволяет редактировать заграничные паспорта
+    default: op
