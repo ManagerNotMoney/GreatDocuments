@@ -3,6 +3,7 @@ package io.github.potaseval.commands;
 import io.github.potaseval.DocsBase;
 import io.github.potaseval.passport.ForeignPassportBook;
 import io.github.potaseval.passport.PassportBook;
+import io.github.potaseval.passport.WorkPassBook;
 import io.github.potaseval.utils.DocumentUtils;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
@@ -21,17 +22,19 @@ import java.util.stream.Collectors;
 public class PassportCommand implements CommandExecutor, TabCompleter {
 
     private final DocsBase plugin;
-    private final Map<UUID, UUID> viewRequests = new HashMap<>();
+    private final Map<UUID, ViewRequest> viewRequests = new HashMap<>();
     private final Map<UUID, Long> lastViewRequest = new HashMap<>();
 
     private static final Set<String> PASSPORT_FIELDS = new LinkedHashSet<>(Arrays.asList(
             "гражданство","возраст","государство","номер","пол","рост",
             "месторождения","семейноеположение","супруг",
-            "страна","район","улица","дом","координаты",
-            "министерство","должность"
+            "страна","район","улица","дом","координаты"
     ));
     private static final Set<String> FOREIGN_FIELDS = new LinkedHashSet<>(Arrays.asList(
             "гражданство","возраст","пол","номер"
+    ));
+    private static final Set<String> WORK_FIELDS = new LinkedHashSet<>(Arrays.asList(
+            "местоработы","должность","возраст","номерпаспорта","министерство"
     ));
 
     public PassportCommand(DocsBase plugin) {
@@ -45,7 +48,18 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         if (args.length == 0) {
-            player.sendMessage("Используйте: /gd passport, /gd view <игрок>, /gd setpassport [игрок] <поле> <значение>, /gd foreignpassport, /gd setforeignpassport ...");
+            player.sendMessage(
+                    "§6/gd passport §7- открыть паспорт\n" +
+                            "§6/gd view <игрок> §7- запросить просмотр\n" +
+                            "§6/gd foreignpassport §7- загранпаспорт\n" +
+                            "§6/gd workpass §7- удостоверение о работе\n" +
+                            (player.hasPermission("greatdocuments.setpassport") ?
+                                    "§6/gd setpassport [игрок] <поле> <значение> §7- изменить паспорт\n" : "") +
+                            (player.hasPermission("greatdocuments.setforeignpassport") ?
+                                    "§6/gd setforeignpassport [игрок] <поле> <значение> §7- изменить загранпаспорт\n" : "") +
+                            (player.hasPermission("greatdocuments.setworkpass") ?
+                                    "§6/gd setworkpass [игрок] <поле> <значение> §7- изменить удостоверение" : "")
+            );
             return true;
         }
         String sub = args[0].toLowerCase();
@@ -79,6 +93,16 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             case "denyview":
                 handleDenyView(player, args);
                 break;
+            case "workpass":
+                new WorkPassBook(player, plugin.getConfig()).open();
+                break;
+            case "setworkpass":
+                if (!player.hasPermission("greatdocuments.setworkpass")) {
+                    player.sendMessage("У вас недостаточно прав.");
+                    return true;
+                }
+                handleSetWorkPass(player, args);
+                break;
             default:
                 player.sendMessage("Неизвестная подкоманда.");
         }
@@ -101,7 +125,68 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("Неизвестное поле. Доступные: " + String.join(", ", validFields));
         return null;
     }
+    private void handleSetWorkPass(Player editor, String[] args) {
+        Player target = null;
+        int fieldStart = 1;
+        if (args.length >= 2) {
+            Player potentialTarget = Bukkit.getPlayer(args[1]);
+            if (potentialTarget != null) {
+                target = potentialTarget;
+                fieldStart = 2;
+            }
+        }
+        if (target == null) target = editor;
 
+        if (!target.equals(editor)) {
+            if (editor.getLocation().distance(target.getLocation()) > 20) {
+                editor.sendMessage("Игрок слишком далеко (максимум 20 блоков).");
+                return;
+            }
+        }
+
+        if (args.length <= fieldStart) {
+            editor.sendMessage("Использование: /gd setworkpass [игрок] <поле> <значение>");
+            return;
+        }
+
+        ParsedField parsed = parseFieldAndValue(editor, args, fieldStart, WORK_FIELDS);
+        if (parsed == null) return;
+
+        String field = parsed.field;
+        String value = parsed.value;
+
+        if (field.equals("возраст")) {
+            try {
+                Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                editor.sendMessage("Возраст должен быть целым числом.");
+                return;
+            }
+        }
+
+        String path = "players." + target.getUniqueId() + ".workPass.";
+        var config = plugin.getConfig();
+
+        Map<String, String> fieldPaths = new LinkedHashMap<>();
+        fieldPaths.put("местоработы", "workPlace");
+        fieldPaths.put("должность", "position");
+        fieldPaths.put("возраст", "age");
+        fieldPaths.put("номерпаспорта", "passportNumber");
+        fieldPaths.put("министерство", "ministry");
+
+        String configKey = fieldPaths.get(field);
+        if (configKey == null) {
+            editor.sendMessage("Поле не найдено.");
+            return;
+        }
+
+        config.set(path + configKey, value);
+        DocumentUtils.updateDocumentDates(plugin, target, "workPass.", 12, 0, editor.getName());
+        plugin.saveConfig();
+
+        String targetMsg = target.equals(editor) ? "Ваше удостоверение" : "Удостоверение игрока " + target.getName();
+        editor.sendMessage("Поле '" + field + "' обновлено! (" + targetMsg + ")");
+    }
     private static class ParsedField {
         final String field;
         final String value;
@@ -110,9 +195,21 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
 
     private void handleViewRequest(Player requester, String[] args) {
         if (args.length < 2) {
-            requester.sendMessage("Использование: /gd view <ник>");
+            requester.sendMessage("Использование: /gd view <ник> [passport|workpass]");
             return;
         }
+        // Определяем тип документа
+        String docType = "passport"; // по умолчанию
+        if (args.length >= 3) {
+            String typeArg = args[2].toLowerCase();
+            if (typeArg.equals("workpass") || typeArg.equals("passport")) {
+                docType = typeArg;
+            } else {
+                requester.sendMessage("Неизвестный тип документа. Используйте passport или workpass.");
+                return;
+            }
+        }
+
         long now = System.currentTimeMillis();
         Long last = lastViewRequest.get(requester.getUniqueId());
         if (last != null && (now - last) < 30_000) {
@@ -133,30 +230,32 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             requester.sendMessage("Игрок слишком далеко (максимум 15 блоков).");
             return;
         }
-        viewRequests.put(target.getUniqueId(), requester.getUniqueId());
+
+        viewRequests.put(target.getUniqueId(), new ViewRequest(requester.getUniqueId(), docType));
         lastViewRequest.put(requester.getUniqueId(), now);
         target.playSound(target.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.2f);
-        Component message = Component.text(requester.getName() + " показывает вам паспорт. ", NamedTextColor.YELLOW)
+
+        String docName = docType.equals("workpass") ? "удостоверение" : "паспорт";
+        Component message = Component.text(requester.getName() + " показывает вам " + docName + ". ", NamedTextColor.YELLOW)
                 .append(Component.text("[Посмотреть]", NamedTextColor.GREEN)
                         .clickEvent(ClickEvent.runCommand("/gd acceptview " + requester.getName())))
                 .append(Component.text(" "))
                 .append(Component.text("[Отказаться]", NamedTextColor.RED)
                         .clickEvent(ClickEvent.runCommand("/gd denyview " + requester.getName())));
         target.sendMessage(message);
-        requester.sendMessage("Запрос отправлен игроку " + target.getName() + ".");
+        requester.sendMessage("Запрос отправлен игроку " + target.getName() + " (" + docName + ").");
     }
-
     private void handleAcceptView(Player target, String[] args) {
         if (args.length < 2) {
             target.sendMessage("Использование: /gd acceptview <игрок>");
             return;
         }
-        UUID requesterUuid = viewRequests.get(target.getUniqueId());
-        if (requesterUuid == null) {
+        ViewRequest request = viewRequests.get(target.getUniqueId());
+        if (request == null) {
             target.sendMessage("Нет активного запроса.");
             return;
         }
-        Player requester = Bukkit.getPlayer(requesterUuid);
+        Player requester = Bukkit.getPlayer(request.requester);
         if (requester == null) {
             target.sendMessage("Игрок вышел из игры.");
             viewRequests.remove(target.getUniqueId());
@@ -166,9 +265,22 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             target.sendMessage("Запрос не от указанного игрока.");
             return;
         }
-        new PassportBook(requester, plugin.getConfig()).open(target);
+        if (!target.getWorld().equals(requester.getWorld()) ||
+                target.getLocation().distance(requester.getLocation()) > 15) {
+            target.sendMessage("Игрок слишком далеко (максимум 15 блоков).");
+            return;
+        }
+
+        // Открываем соответствующий документ
+        if (request.docType.equals("workpass")) {
+            new WorkPassBook(requester, plugin.getConfig()).open(target);
+        } else {
+            new PassportBook(requester, plugin.getConfig()).open(target);
+        }
+
         viewRequests.remove(target.getUniqueId());
-        requester.sendMessage(target.getName() + " просматривает ваш паспорт.");
+        requester.sendMessage(target.getName() + " просматривает ваш " +
+                (request.docType.equals("workpass") ? "удостоверение." : "паспорт."));
     }
 
     private void handleDenyView(Player target, String[] args) {
@@ -176,15 +288,23 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             target.sendMessage("Использование: /gd denyview <игрок>");
             return;
         }
-        UUID requesterUuid = viewRequests.remove(target.getUniqueId());
-        if (requesterUuid == null) {
+        ViewRequest request = viewRequests.get(target.getUniqueId());
+        if (request == null) {
             target.sendMessage("Нет активного запроса.");
             return;
         }
-        Player requester = Bukkit.getPlayer(requesterUuid);
-        if (requester != null) {
-            requester.sendMessage(target.getName() + " отклонил(а) запрос.");
+        Player requester = Bukkit.getPlayer(request.requester);
+        if (requester == null) {
+            target.sendMessage("Игрок, запросивший просмотр, вышел из игры.");
+            viewRequests.remove(target.getUniqueId());
+            return;
         }
+        if (!requester.getName().equalsIgnoreCase(args[1])) {
+            target.sendMessage("Запрос не от указанного игрока.");
+            return;
+        }
+        viewRequests.remove(target.getUniqueId());
+        requester.sendMessage(target.getName() + " отклонил(а) запрос.");
         target.sendMessage("Вы отклонили запрос.");
     }
 
@@ -242,6 +362,28 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
         String path = "players." + uuid + ".";
         var config = plugin.getConfig();
 
+        if (!target.equals(editor)) {
+            String editorWorkPath = "players." + editor.getUniqueId() + ".workPass.";
+            String editorWorkPlace = config.getString(editorWorkPath + "workPlace");
+            String editorPosition = config.getString(editorWorkPath + "position");
+            if (editorWorkPlace == null || editorWorkPlace.isEmpty() ||
+                    editorPosition == null || editorPosition.isEmpty()) {
+                editor.sendMessage("У вас нет действующего удостоверения о работе. Вы не можете редактировать чужие паспорта.");
+                return;
+            }
+            config.set(path + "ministry", editorWorkPlace);
+            config.set(path + "issuerPosition", editorPosition);
+        } else {
+            String editorWorkPath = "players." + editor.getUniqueId() + ".workPass.";
+            String wp = config.getString(editorWorkPath + "workPlace");
+            if (wp != null && !wp.isEmpty()) {
+                config.set(path + "ministry", wp);
+            }
+            String pos = config.getString(editorWorkPath + "position");
+            if (pos != null && !pos.isEmpty()) {
+                config.set(path + "issuerPosition", pos);
+            }
+        }
         Map<String, String> fieldPaths = new LinkedHashMap<>();
         fieldPaths.put("гражданство", "citizenship");
         fieldPaths.put("возраст", "age");
@@ -257,8 +399,6 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
         fieldPaths.put("улица", "residence.street");
         fieldPaths.put("дом", "residence.house");
         fieldPaths.put("координаты", "residence.coords");
-        fieldPaths.put("министерство", "ministry");
-        fieldPaths.put("должность", "issuerPosition");
 
         String configKey = fieldPaths.get(field);
         if (configKey == null) {
@@ -267,8 +407,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
         }
 
         config.set(path + configKey, value);
-        plugin.saveConfig();
         DocumentUtils.updateDocumentDates(plugin, target, "", 1, 0, editor.getName());
+        plugin.saveConfig();
+
         String targetMsg = target.equals(editor) ? "Ваш паспорт" : "Паспорт игрока " + target.getName();
         editor.sendMessage("Поле '" + field + "' обновлено! (" + targetMsg + ")");
     }
@@ -337,7 +478,14 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
         String targetMsg = target.equals(editor) ? "Ваш загранпаспорт" : "Загранпаспорт игрока " + target.getName();
         editor.sendMessage("Поле '" + field + "' обновлено! (" + targetMsg + ")");
     }
-
+    private static class ViewRequest {
+        final UUID requester;
+        final String docType;
+        ViewRequest(UUID requester, String docType) {
+            this.requester = requester;
+            this.docType = docType;
+        }
+    }
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!(sender instanceof Player)) return null;
@@ -350,6 +498,8 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             completions.add("view");
             completions.add("acceptview");
             completions.add("denyview");
+            completions.add("workpass");
+            if (sender.hasPermission("greatdocuments.setworkpass")) completions.add("setworkpass");
         } else if (args.length == 2) {
             String sub = args[0].toLowerCase();
             if (sub.equals("setpassport") && sender.hasPermission("greatdocuments.setpassport")) {
@@ -359,6 +509,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
                 completions.addAll(FOREIGN_FIELDS);
                 completions.addAll(Bukkit.getOnlinePlayers().stream().map(Player::getName).collect(Collectors.toList()));
             } else if (sub.equals("view") || sub.equals("acceptview") || sub.equals("denyview")) {
+                completions.addAll(Bukkit.getOnlinePlayers().stream().map(Player::getName).collect(Collectors.toList()));
+            } else if (sub.equals("setworkpass") && sender.hasPermission("greatdocuments.setworkpass")) {
+                completions.addAll(WORK_FIELDS);
                 completions.addAll(Bukkit.getOnlinePlayers().stream().map(Player::getName).collect(Collectors.toList()));
             }
         } else if (args.length == 3) {
@@ -379,7 +532,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
                 } else if (prev.equalsIgnoreCase("пол")) {
                     completions.addAll(Arrays.asList("Мужской","Женский"));
                 }
-            }
+            } else if (sub.equals("view")) {
+            completions.addAll(Arrays.asList("passport", "workpass"));
+        }
         } else if (args.length == 4) {
             String sub = args[0].toLowerCase();
             if (sub.equals("setpassport") && sender.hasPermission("greatdocuments.setpassport")
