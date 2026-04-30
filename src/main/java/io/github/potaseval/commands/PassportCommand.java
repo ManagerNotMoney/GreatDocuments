@@ -9,6 +9,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.Sound;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -59,6 +60,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
                                     "§6/gd setforeignpassport [игрок] <поле> <значение> §7- изменить загранпаспорт\n" : "") +
                             (player.hasPermission("greatdocuments.setworkpass") ?
                                     "§6/gd setworkpass [игрок] <поле> <значение> §7- изменить удостоверение" : "")
+                            + "§6/gd list <номер> §7- найти паспорт по номеру\n"
+                            + (player.hasPermission("greatdocuments.delpassport") ?
+                               "§6/gd delpassport [игрок] [тип] §7- аннулировать документ\n" : "")
             );
             return true;
         }
@@ -103,6 +107,12 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
                 }
                 handleSetWorkPass(player, args);
                 break;
+            case "list":
+                handleListPassport(player, args);
+                break;
+            case "delpassport":
+                handleDelPassport(player, args);
+                break;
             default:
                 player.sendMessage("Неизвестная подкоманда.");
         }
@@ -110,9 +120,8 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
     }
 
     private ParsedField parseFieldAndValue(Player sender, String[] args, int start, Set<String> validFields) {
-        // Ищем наиболее длинное совпадение (до 2 слов, но сейчас все поля без пробелов)
-        for (int len = Math.min(args.length - start, 1); len > 0; len--) { // только одно слово
-            String candidate = args[start]; // все поля теперь однословные
+        for (int len = Math.min(args.length - start, 1); len > 0; len--) {
+            String candidate = args[start];
             if (validFields.contains(candidate.toLowerCase())) {
                 String value = start + 1 < args.length ? String.join(" ", Arrays.copyOfRange(args, start + 1, args.length)) : "";
                 if (value.isEmpty()) {
@@ -125,6 +134,99 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("Неизвестное поле. Доступные: " + String.join(", ", validFields));
         return null;
     }
+    private void handleDelPassport(Player sender, String[] args) {
+        Player target = null;
+        OfflinePlayer offlineTarget = null;
+        if (args.length >= 2) {
+            target = Bukkit.getPlayer(args[1]);
+            if (target == null) {
+                offlineTarget = Bukkit.getOfflinePlayer(args[1]);
+                if (!offlineTarget.hasPlayedBefore() && !offlineTarget.isOnline()) {
+                    sender.sendMessage("Игрок с ником " + args[1] + " никогда не заходил на сервер.");
+                    return;
+                }
+            }
+        } else {
+            target = sender;
+        }
+
+        UUID targetUuid = target != null ? target.getUniqueId() : offlineTarget.getUniqueId();
+        String targetName = target != null ? target.getName() : offlineTarget.getName();
+
+        if (target != null && !target.equals(sender)) {
+            if (!sender.hasPermission("greatdocuments.delpassport")) {
+                sender.sendMessage("У вас нет прав на удаление чужих документов.");
+                return;
+            }
+        } else if (target == null && !sender.hasPermission("greatdocuments.delpassport")) {
+            sender.sendMessage("У вас нет прав на удаление документов оффлайн-игроков.");
+            return;
+        }
+
+        String type = "passport";
+        if (args.length >= 3) {
+            type = args[2].toLowerCase();
+        }
+        Set<String> allowedTypes = new HashSet<>(Arrays.asList("passport", "foreign", "workpass", "all"));
+        if (!allowedTypes.contains(type)) {
+            sender.sendMessage("Неизвестный тип документа. Допустимые: passport, foreign, workpass, all.");
+            return;
+        }
+
+        var config = plugin.getConfig();
+        String path = "players." + targetUuid.toString();
+        boolean existed = false;
+
+        if (type.equals("passport") || type.equals("all")) {
+            String[] passportFields = {
+                    "passportState", "citizenship", "age", "gender", "height",
+                    "birthplace", "maritalStatus", "spouse", "passportNumber",
+                    "ministry", "issuerPosition", "issueDate", "validUntil", "issuedBy"
+            };
+            for (String field : passportFields) {
+                if (config.contains(path + "." + field)) {
+                    config.set(path + "." + field, null);
+                    existed = true;
+                }
+            }
+            if (config.contains(path + ".residence")) {
+                config.set(path + ".residence", null);
+                existed = true;
+            }
+        }
+
+        if (type.equals("foreign") || type.equals("all")) {
+            if (config.contains(path + ".foreignPassport")) {
+                config.set(path + ".foreignPassport", null);
+                existed = true;
+            }
+        }
+
+        if (type.equals("workpass") || type.equals("all")) {
+            if (config.contains(path + ".workPass")) {
+                config.set(path + ".workPass", null);
+                existed = true;
+            }
+        }
+
+        if (type.equals("all")) {
+            if (config.getConfigurationSection(path) != null && config.getConfigurationSection(path).getKeys(false).isEmpty()) {
+                config.set(path, null);
+            }
+        }
+
+        if (!existed) {
+            sender.sendMessage("У игрока " + targetName + " не найдено данных для удаления (" + type + ").");
+            return;
+        }
+
+        plugin.saveConfig();
+        sender.sendMessage("Документ (" + type + ") игрока " + targetName + " аннулирован.");
+
+        if (target != null && !target.equals(sender)) {
+            target.sendMessage("Ваш документ (" + type + ") был аннулирован администратором " + sender.getName() + ".");
+        }
+    }
     private void handleSetWorkPass(Player editor, String[] args) {
         Player target = null;
         int fieldStart = 1;
@@ -133,6 +235,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             if (potentialTarget != null) {
                 target = potentialTarget;
                 fieldStart = 2;
+            } else if (!WORK_FIELDS.contains(args[1].toLowerCase())) {
+                editor.sendMessage("Игрок с ником " + args[1] + " не найден.");
+                return;
             }
         }
         if (target == null) target = editor;
@@ -198,8 +303,7 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             requester.sendMessage("Использование: /gd view <ник> [passport|workpass]");
             return;
         }
-        // Определяем тип документа
-        String docType = "passport"; // по умолчанию
+        String docType = "passport";
         if (args.length >= 3) {
             String typeArg = args[2].toLowerCase();
             if (typeArg.equals("workpass") || typeArg.equals("passport")) {
@@ -271,7 +375,6 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        // Открываем соответствующий документ
         if (request.docType.equals("workpass")) {
             new WorkPassBook(requester, plugin.getConfig()).open(target);
         } else {
@@ -316,6 +419,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             if (potentialTarget != null) {
                 target = potentialTarget;
                 fieldStart = 2;
+            } else if (!PASSPORT_FIELDS.contains(args[1].toLowerCase())) {
+                editor.sendMessage("Игрок с ником " + args[1] + " не найден.");
+                return;
             }
         }
         if (target == null) target = editor;
@@ -405,7 +511,15 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             editor.sendMessage("Поле не найдено в конфигурации.");
             return;
         }
-
+        if (field.equals("номер")) {
+            String currentNumber = config.getString(path + "passportNumber");
+            if (!value.equals(currentNumber)) {
+                if (isInternalPassportNumberUsed(value, target.getUniqueId())) {
+                    editor.sendMessage("Этот номер внутреннего паспорта уже используется другим игроком.");
+                    return;
+                }
+            }
+        }
         config.set(path + configKey, value);
         DocumentUtils.updateDocumentDates(plugin, target, "", 1, 0, editor.getName());
         plugin.saveConfig();
@@ -422,6 +536,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             if (potentialTarget != null) {
                 target = potentialTarget;
                 fieldStart = 2;
+            } else if (!FOREIGN_FIELDS.contains(args[1].toLowerCase())) {
+                editor.sendMessage("Игрок с ником " + args[1] + " не найден.");
+                return;
             }
         }
         if (target == null) target = editor;
@@ -472,11 +589,81 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             editor.sendMessage("Поле не найдено.");
             return;
         }
+        if (field.equals("номер")) {
+            String currentNumber = config.getString(path + "number");
+            if (!value.equals(currentNumber)) {
+                if (isForeignPassportNumberUsed(value, target.getUniqueId())) {
+                    editor.sendMessage("Этот номер загранпаспорта уже используется другим игроком.");
+                    return;
+                }
+            }
+        }
         config.set(path + configKey, value);
         DocumentUtils.updateDocumentDates(plugin, target, "foreignPassport.", 0, 2, editor.getName());
         plugin.saveConfig();
         String targetMsg = target.equals(editor) ? "Ваш загранпаспорт" : "Загранпаспорт игрока " + target.getName();
         editor.sendMessage("Поле '" + field + "' обновлено! (" + targetMsg + ")");
+    }
+    private void handleListPassport(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage("Использование: /gd list <номер паспорта>");
+            return;
+        }
+        String number = args[1];
+        var config = plugin.getConfig();
+        var playersSection = config.getConfigurationSection("players");
+        if (playersSection == null) {
+            player.sendMessage("Нет данных об игроках.");
+            return;
+        }
+
+        UUID foundUuid = null;
+        String foundType = null;
+
+        for (String uuidKey : playersSection.getKeys(false)) {
+            UUID uuid;
+            try {
+                uuid = UUID.fromString(uuidKey);
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            String internalNumber = config.getString("players." + uuidKey + ".passportNumber");
+            if (internalNumber != null && internalNumber.equals(number)) {
+                if (foundUuid != null) {
+                    player.sendMessage("Найдено несколько паспортов с таким номером. Уточните запрос.");
+                    return;
+                }
+                foundUuid = uuid;
+                foundType = "internal";
+            }
+            String foreignNumber = config.getString("players." + uuidKey + ".foreignPassport.number");
+            if (foreignNumber != null && foreignNumber.equals(number)) {
+                if (foundUuid != null) {
+                    player.sendMessage("Найдено несколько паспортов с таким номером. Уточните запрос.");
+                    return;
+                }
+                foundUuid = uuid;
+                foundType = "foreign";
+            }
+        }
+
+        if (foundUuid == null) {
+            player.sendMessage("Паспорт с таким номером не найден.");
+            return;
+        }
+        Player owner = Bukkit.getPlayer(foundUuid);
+        if (owner == null) {
+            OfflinePlayer offline = Bukkit.getOfflinePlayer(foundUuid);
+            String name = offline.getName();
+            if (name == null) name = foundUuid.toString();
+            player.sendMessage("Владелец паспорта (" + name + ") не в сети.");
+            return;
+        }
+        if (foundType.equals("internal")) {
+            new PassportBook(owner, config).open(player);
+        } else {
+            new ForeignPassportBook(owner, config).open(player);
+        }
     }
     private static class ViewRequest {
         final UUID requester;
@@ -485,6 +672,44 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             this.requester = requester;
             this.docType = docType;
         }
+    }
+    private boolean isForeignPassportNumberUsed(String number, UUID excludeUuid) {
+        var config = plugin.getConfig();
+        var playersSection = config.getConfigurationSection("players");
+        if (playersSection == null) return false;
+        for (String uuidKey : playersSection.getKeys(false)) {
+            UUID uuid;
+            try {
+                uuid = UUID.fromString(uuidKey);
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            if (uuid.equals(excludeUuid)) continue;
+            String existingNumber = config.getString("players." + uuidKey + ".foreignPassport.number");
+            if (existingNumber != null && existingNumber.equals(number)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private boolean isInternalPassportNumberUsed(String number, UUID excludeUuid) {
+        var config = plugin.getConfig();
+        var playersSection = config.getConfigurationSection("players");
+        if (playersSection == null) return false;
+        for (String uuidKey : playersSection.getKeys(false)) {
+            UUID uuid;
+            try {
+                uuid = UUID.fromString(uuidKey);
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            if (uuid.equals(excludeUuid)) continue;
+            String existingNumber = config.getString("players." + uuidKey + ".passportNumber");
+            if (existingNumber != null && existingNumber.equals(number)) {
+                return true;
+            }
+        }
+        return false;
     }
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
@@ -499,7 +724,9 @@ public class PassportCommand implements CommandExecutor, TabCompleter {
             completions.add("acceptview");
             completions.add("denyview");
             completions.add("workpass");
+            completions.add("list");
             if (sender.hasPermission("greatdocuments.setworkpass")) completions.add("setworkpass");
+            if (sender.hasPermission("greatdocuments.delpassport")) completions.add("delpassport");
         } else if (args.length == 2) {
             String sub = args[0].toLowerCase();
             if (sub.equals("setpassport") && sender.hasPermission("greatdocuments.setpassport")) {

@@ -28,7 +28,6 @@ public class ForeignPassportBook {
         String path = "players." + uuid + ".";
         String foreignPath = path + "foreignPassport.";
 
-        // Данные загранпаспорта
         String citizenship = config.getString(foreignPath + "citizenship", "Не указано");
         String age = config.getString(foreignPath + "age", "Не указано");
         String gender = config.getString(foreignPath + "gender", "Не указано");
@@ -37,7 +36,6 @@ public class ForeignPassportBook {
         String foreignValidUntil = config.getString(foreignPath + "validUntil", "Не указано");
         String foreignIssuedBy = config.getString(foreignPath + "issuedBy", "Не указано");
 
-        // Данные внутреннего паспорта (для страницы 3)
         String internalState = config.getString(path + "passportState", "Не указано");
         String internalNumber = config.getString(path + "passportNumber", "Не указано");
         String internalIssueDate = config.getString(path + "issueDate", "Не указано");
