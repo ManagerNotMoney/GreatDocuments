@@ -1,5 +1,5 @@
 name: GreatDocuments
-version: '${version}'
+version: 0.0.6
 main: io.github.potaseval.DocsBase
 description: Плагин добавляет документы.
 author: ManagerMoney

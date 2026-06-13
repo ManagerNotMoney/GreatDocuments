@@ -34,9 +34,12 @@ public final class DocumentUtils {
         LocalDate issue = LocalDate.now();
         LocalDate valid = issue.plusMonths(months).plusWeeks(weeks);
         FileConfiguration config = plugin.getConfig();
-        String path = "players." + player.getUniqueId() + "." + subPath;
-        config.set(path + "issueDate", issue.format(DATE_FORMAT));
-        config.set(path + "validUntil", valid.format(DATE_FORMAT));
-        config.set(path + "issuedBy", issuerName);
+        String path = "players." + player.getUniqueId();
+        if (!subPath.isEmpty()) {
+            path += "." + subPath.replaceAll("^\\.|\\.$", "");
+        }
+        config.set(path + ".issueDate", issue.format(DATE_FORMAT));
+        config.set(path + ".validUntil", valid.format(DATE_FORMAT));
+        config.set(path + ".issuedBy", issuerName);
     }
 }

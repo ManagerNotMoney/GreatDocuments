@@ -32,6 +32,7 @@ public class PassportBook {
         String age = config.getString(path + "age", "Не указано");
         String gender = config.getString(path + "gender", "Не указано");
         String height = config.getString(path + "height", "Не указано");
+        String signature = config.getString(path + "signature", "Не указано");
 
         String district = config.getString(path + "residence.district", "Не указано");
         String street = config.getString(path + "residence.street", "Не указано");
@@ -44,7 +45,7 @@ public class PassportBook {
 
         String passportNumber = config.getString(path + "passportNumber", "Не указано");
         String issuedBy = config.getString(path + "issuedBy", "Не указано");
-        String ministry = config.getString(path + "ministry", "Не указано"); // было "Министерство юстиции"
+        String ministry = config.getString(path + "ministry", "Не указано");
         String issuerPosition = config.getString(path + "issuerPosition", "Не указано");
 
         String issueDate = config.getString(path + "issueDate", "Не указано");
@@ -67,7 +68,7 @@ public class PassportBook {
 
         // Страница 2: Личные данные
         boolean hasPersonalData = !age.equals("Не указано") || !gender.equals("Не указано")
-                || !citizenship.equals("Не указано") || !height.equals("Не указано");
+                || !citizenship.equals("Не указано") || !height.equals("Не указано") || !signature.equals("Не указано");
 
         Component page2;
         if (hasPersonalData) {
@@ -83,7 +84,9 @@ public class PassportBook {
                     .append(Component.text("  Гражданство: ", NamedTextColor.DARK_GREEN))
                     .append(Component.text(citizenship + "\n", NamedTextColor.BLACK))
                     .append(Component.text("  Рост: ", NamedTextColor.DARK_GREEN))
-                    .append(Component.text(height + "\n\n", NamedTextColor.BLACK))
+                    .append(Component.text(height + "\n", NamedTextColor.BLACK))
+                    .append(Component.text("  Подпись: ", NamedTextColor.DARK_GREEN))
+                    .append(Component.text(signature + "\n\n", NamedTextColor.BLACK))
                     .append(Component.text(" ▓▓▓▓▓▓▓▓▓▓▓▓", NamedTextColor.GRAY))
                     .build();
         } else {

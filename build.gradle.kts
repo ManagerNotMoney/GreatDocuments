@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "io.github.potaseval"
-version = "0.0.3"
+version = "0.0.6"
 
 repositories {
     mavenCentral()

@@ -10,8 +10,14 @@ public final class DocsBase extends JavaPlugin {
         saveDefaultConfig();
 
         PassportCommand passportCommand = new PassportCommand(this);
-        getCommand("gd").setExecutor(passportCommand);
-        getCommand("gd").setTabCompleter(passportCommand);
+        var cmd = getCommand("gd");
+        if (cmd == null) {
+            getLogger().severe("Команда 'gd' не найдена в plugin.yml! Плагин отключается.");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+        cmd.setExecutor(passportCommand);
+        cmd.setTabCompleter(passportCommand);
 
         getLogger().info("GreatDocuments загружен!");
     }
